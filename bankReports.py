@@ -1,5 +1,5 @@
 import pandas as pd
-from pdfReader import PdfTable
+from pdfReader import PdfTableReader
 
 banks = pd.read_csv('./BankPDFs.csv')
 banks.columns = ['company', 'pdf_url', 'country']
@@ -10,7 +10,7 @@ dataset = []
 for comp in comp_info[:4]:
     comapny = comp['company']
     pdf_url = comp['pdf_url']
-    extractor = PdfTable(search_terms, comapny, pdf_url)
+    extractor = PdfTableReader(search_terms, comapny, pdf_url)
     rep = extractor.pdf_search(attempts=1)
     print(rep)
     dataset.append(rep)

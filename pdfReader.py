@@ -15,7 +15,7 @@ import camelot
 import pikepdf
 from tika import parser
 
-class PdfTable():
+class PdfTableReader():
     def __init__(self, search_terms, company_name, pdf_url, header_regex_match='default'):
         self.company_name = company_name
         self.extracted_tables = {}
