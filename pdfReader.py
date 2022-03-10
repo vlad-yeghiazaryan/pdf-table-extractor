@@ -1,132 +1,161 @@
-from urllib.request import urlretrieve
+# main 
 import numpy as np
 import pandas as pd
+
+# charts
+import matplotlib.pyplot as plt
+from PIL import Image
+
+# text processing
 import re
-import tabula
-from pdfminer.layout import LAParams, LTTextBox
-from pdfminer.pdfpage import PDFPage
-from pdfminer.pdfinterp import PDFResourceManager
-from pdfminer.pdfinterp import PDFPageInterpreter
-from pdfminer.converter import PDFPageAggregator
 
-def createDocMapping(fileUrl):
-    urlretrieve(fileUrl,'document.pdf')
-    fp = open('document.pdf', 'rb')
-    rsrcmgr = PDFResourceManager()
-    laparams = LAParams()
-    device = PDFPageAggregator(rsrcmgr, laparams=laparams)
-    interpreter = PDFPageInterpreter(rsrcmgr, device)
-    pages = PDFPage.get_pages(fp)
-    document = []
-    index = 0
+# pdf processing
+from urllib.request import urlretrieve
+import camelot
+import pikepdf
+from tika import parser
 
-    for page in pages:
-        index+= 1
-        interpreter.process_page(page)
-        layout = device.get_result()
-        for lobj in layout:
-            if isinstance(lobj, LTTextBox):
-                x, y, text = lobj.bbox[0], lobj.bbox[3], lobj.get_text()
-                element = {'text':text.lower(), 'page': index, 'pos_x':x, 'pos_y':y, 'page_size': page.mediabox}
-                document.append(element)
-    fp.close()
-    device.close()
-    return pd.DataFrame(document)
+class PdfTable():
+    def __init__(self, search_terms, company_name, pdf_url, header_regex_match='default'):
+        self.company_name = company_name
+        self.extracted_tables = {}
+        self.current_search_terms = []
+        self.page_matches = self.createPageMapping(search_terms, pdf_url)
+        self.search_terms = search_terms
+        aDate = '((dec)|(december)|(\d\d)|(\d\d\d\d))'
+        date_query = f'^{aDate}[\s.-]{aDate}?[.\s-]?{aDate}$'
+        self.header_match = date_query if header_regex_match =='default' else header_regex_match
 
-def search_var(search_term, document, pages='all', y_interval=1, y_adj=0, index=0):
-    if pages=='all':
-        document_mapping = document
-    else:
-        document_mapping = document[document['page'].isin(pages)]
-    search_results = document_mapping[document_mapping['text'].str.contains(search_term)]
-    if len(search_results)==0:
-        return None
-    search_result = search_results.iloc[index,:]
-    filter_page = search_result['page']
-    filter_pos_y = search_result['pos_y'] + y_adj
-    page_filtered_results = document_mapping[document_mapping['page'] == filter_page]
-    row_filtered_results = page_filtered_results[(page_filtered_results['pos_y'] - filter_pos_y).abs() < y_interval]
-    results = row_filtered_results.sort_values('pos_x')
-    results['#_of_search_results'] = search_results.shape[0]
-    return results
+    # fast pdf text parser
+    @staticmethod
+    def parse_pages(file):
+        raw_xml = parser.from_file(file, xmlContent=True)
+        body = raw_xml['content'].split('<body>')[1].split('</body>')[0]
+        body_without_tag = body.replace("<p>", "").replace("</p>", "").replace("<div>", "").replace("</div>","").replace("<p />","")
+        text_pages = body_without_tag.split("""<div class="page">""")[1:]
+        num_pages = len(text_pages)
+        if num_pages==int(raw_xml['metadata']['xmpTPg:NPages']): 
+            #check if it worked correctly
+            return text_pages
 
-def datesOfTable(document, page):
-    matches = search_var('\d\d\d\d', document, [page], 1, 0, index=0)['#_of_search_results'].iloc[0]
-    for i in range(matches):
-        dates = search_var('\d\d\d\d', document, [page], 1, 0, index=i)
-        if dates.shape[0]==1:
-            continue
-        match = re.search(".*(?<![\s(31)(december)(\d\d\d\d)])",  dates['text'].iloc[-1])
-        if match.group(0) != '':
-            continue
-        return dates
+    # Identify all pages from each search term
+    def createPageMapping(self, search_terms, pdf_url):
+        # getting document pdf
+        urlretrieve(pdf_url,'document.pdf')
+        pdf = pikepdf.open('document.pdf', allow_overwriting_input=True)
+        pdf.save('document.pdf')
+        pdf.close()
+        
+        # get pdf pages and extract mapping
+        pages = np.array(self.parse_pages('document.pdf'))
+        matches = {}
+        for search_term in search_terms:
+            term_match = np.vectorize(lambda x: bool(re.search(search_term, x, re.IGNORECASE)))
+            # adding 1 to convert indices to page numbers
+            matches[search_term] = (np.where(term_match(pages))[0]+1).tolist()
+        return matches
 
-def search_row(search_term, document, x_adj=30, top_adj=5, bottom_adj=5, index=0):
-    # get first match for the search term
-    search_results = search_var(search_term, document, 'all', 1, 0, index=index)
-
-    # return None if no results are returned
-    if type(search_results) == type(None):
-        if "\n" not in search_term:
-            return search_row(search_term+"\n", document, x_adj, top_adj, bottom_adj)
-        else:
-            return None
-
-     # If result is not from a table move to the next one:
-    if (search_results.shape[0] == 1):
-        remaining = search_results['#_of_search_results'].iloc[0]-1
-        if index < remaining:
-            return search_row(search_term, document, x_adj, top_adj, bottom_adj, index+1)
-        elif "\n" not in search_term:
-            return search_row(search_term+"\n", document, x_adj, top_adj, bottom_adj)
-        else:
-            return None
-
-    # extract page data
-    search_results_page = search_results['page'].iloc[0]
-    search_results_page_size_y = search_results['page_size'].iloc[0][-1]
-
-    # extract table area data
-    table_dates = datesOfTable(document=document, page=search_results_page)
+    # custom table output format
+    @staticmethod
+    def  customTable(search_term, df, row_matches, columns_matches):
+        e = df.iloc[row_matches, columns_matches]
+        new_header = e.iloc[0].values 
+        e = e[1:].reset_index(drop=True)
+        e.columns = new_header
+        e = e.T
+        e.columns =[search_term]
+        return e
     
-    if type(table_dates) == type(None):
-        remaining = search_results['#_of_search_results'].iloc[0]-1
-        if index < remaining:
-            return search_row(search_term, document, x_adj, top_adj, bottom_adj, index+1)
-        elif "\n" not in search_term:
-            return search_row(search_term+"\n", document, x_adj, top_adj, bottom_adj)
-        else:
-            return None
-    top = search_results_page_size_y - table_dates['pos_y'].min()
-    bottom = search_results_page_size_y - search_results['pos_y'].max()
-    left = search_results['pos_x'].min()
-    right = search_results['pos_x'].max()
-    area = (top-top_adj, left-x_adj, bottom+bottom_adj, right+x_adj)
+    # searches and extracts most relevant info from the table
+    def search_page(self, search_term, page, flavor='stream', edge_tol=180, row_tol=10):
+        # extract all tables from page
+        tables = camelot.read_pdf('document.pdf', pages=f'{page}', flavor=flavor, edge_tol=edge_tol, row_tol=row_tol, suppress_stdout=True)
 
-    # crop table with tabula
-    table = tabula.read_pdf('document.pdf', pages=[search_results_page], stream=True, area=area)[0]
-
-    if table.iloc[-1, 0].lower() not in search_term:
-        return search_row(search_term, document, x_adj, top_adj, bottom_adj+5)
-    return table
-
-
-def pdf_search(search_term, document):
-    sr = search_row(search_term, document)
-    if type(sr) == type(None):
-        sr = pd.DataFrame({'year': [np.nan], search_term:[np.nan]})
-        return sr.set_index('year')
-    sr = sr.loc[:,sr.columns.str.contains('\d\d\d\d')].iloc[-1]
-    sr = pd.DataFrame({'year': sr.index, search_term:sr.values})
-    sr['year'] = sr['year'].apply(lambda date: re.search(r"(\d{4})", date).group(1))
-    return sr.set_index('year').sort_index()
-
-def companyReport(search_terms, company_name, pdf_url):
-    document = createDocMapping(pdf_url)
-    search_results = []
-    for search_term in search_terms:
-        search_result = pdf_search(search_term, document)
-        search_results.append(search_result)
-    report_table = pd.concat(search_results, join='outer', axis=1)
-    report_table['company'] = company_name
-    return report_table
+        # Return None if no tables found
+        if len(tables)==0:
+            return (None, None)
+        
+        # find the table that contains the search term and return the table extract
+        for table in tables:
+            df =  table.df
+            row_matches = df[df.apply(lambda l: any([re.search(search_term, x.lower().strip()) != None for x in l]), axis=1)].index.to_list()
+            date_rows = df[df.apply(lambda l: any([re.search(self.header_match, x.lower().strip()) != None for x in l]), axis=1)]
+            if (len(row_matches) != 0) and (len(date_rows)!=0):
+                row_matches.insert(0, date_rows.index[0])
+                columns_matches = date_rows.iloc[0][date_rows.iloc[0].apply(lambda x: re.search(self.header_match, x.lower().strip()) != None)].index.to_list()
+                return (self.customTable(search_term, df, row_matches[:2], columns_matches), table)
+        return (None, None)
+    
+    # finds the best table in the page
+    def findBestTable(self, search_term, page, attempts = 5, flavor='stream'):
+        tables = []
+        for attempt in range(attempts):
+            df, table = self.search_page(search_term, page, flavor=flavor, edge_tol=60*(attempt+1), row_tol=4*(attempt+1))
+            if type(df) == type(None):
+                continue
+            quality = 0.7*np.log(np.abs(table.accuracy)) - 0.3*(np.log(table.whitespace)*2)
+            tables.append({'table': table, 'df': df, 'quality':quality})
+        if len(tables) == 0:
+            return (None, None)
+        tableReport = pd.DataFrame(tables)
+        bestTable = tableReport.loc[tableReport['quality'].idxmax()]
+        return (bestTable['df'], bestTable['table'])
+    
+    # compares tables from different pages and selects the most relevant info
+    @staticmethod
+    def selectBestMatch(tableReport):
+        bestTable = tableReport.loc[tableReport['accuracy'].idxmax()]
+        return bestTable
+    
+    # performs a query search across pages and returns a table
+    def search_pages(self, search_term, attempts = 5, flavor='stream'):
+        pages = self.page_matches[search_term]
+        if len(pages) == 0:
+            df = pd.DataFrame({search_term:[np.nan]}, index=[np.nan])
+            return (df, None)
+        tables = []
+        for page in pages:
+            df, table = self.findBestTable(search_term, page, attempts, flavor)
+            if type(df) == type(None):
+                continue
+            tables.append({'page':page, 'NAs':df.isna().sum().sum(), 'accuracy':np.abs(table.accuracy), 'whitespace':table.whitespace, 'df':df, 'table':table})
+        if len(tables) == 0:
+            df = pd.DataFrame({search_term:[np.nan]}, index=[np.nan])
+            return (df, None)
+        tableReport = pd.DataFrame(tables)
+        bestTable = self.selectBestMatch(tableReport)
+        return (bestTable['df'], bestTable['table'])
+    
+    # finds related info for all of the search terms in the pdf
+    def pdf_search(self, attempts = 5, flavor='stream', ):
+        tables = []
+        self.extracted_tables = {}
+        self.current_search_terms = self.search_terms
+        for search_term in self.search_terms:
+            df, table = self.search_pages(search_term, attempts, flavor)
+            tables.append(df)
+            self.extracted_tables.update({search_term:table})
+        report_table = pd.concat(tables, join='outer', axis=1)
+        report_table['company'] = self.company_name
+        report_table.index.name = 'year'
+        return report_table
+    
+    def plot_extracts(self):
+        eTables = self.extracted_tables
+        fig, axis = plt.subplots(2,2, figsize=(15, 10))
+        for index, search_term in enumerate(self.current_search_terms):
+            if type(eTables[search_term]) != type(None):
+                cImage1 = camelot.plot(eTables[search_term], kind='contour')
+                cImage2 = camelot.plot(eTables[search_term], kind='textedge')
+                cImage1.canvas.draw()
+                plt.close()
+                cImage2.canvas.draw()
+                plt.close()
+                image1 = Image.frombytes('RGB', cImage1.canvas.get_width_height(),cImage1.canvas.tostring_rgb())
+                image2 = Image.frombytes('RGB', cImage2.canvas.get_width_height(),cImage2.canvas.tostring_rgb())
+                axis[0, index].title.set_text(search_term)
+                axis[0, index].imshow(image1)
+                axis[1, index].imshow(image2)
+            else:
+                axis[0, index].title.set_text(search_term)
+        return fig

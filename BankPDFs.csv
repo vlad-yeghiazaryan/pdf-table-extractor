@@ -1,4 +1,6 @@
 bank,document url,country
+BNP Paribas,https://invest.bnpparibas/en/document/4q21-cfsu,France
+ABN AMRO,https://assets.ctfassets.net/1u811bvgvthc/1IHlVdHZhHfAR8ODgWySms/ab7a4883991a87691f05796a2bea6524/ABN_AMRO_____Annual_Report_2020.pdf,Netherlands (the)
 """Swedbank"" AS",https://www.swedbank.lv/static/pdf/about/governance/swedbank_risk_and_capital_adequacy_Q4_2020_ENG.pdf,Latvia
 "AS ""SEB banka""",https://www.seb.lv/sites/default/files/web/files/webstorage/Parskati/Cap_Adequacy_SEB_Pillar3_2020_4quater_ENG.pdf,Latvia
 "„Swedbank”, AB",https://www.swedbank.lt/static/pdf/about/finance/reports/2020_annual_report.pdf,Lithuania
