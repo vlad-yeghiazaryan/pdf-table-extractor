@@ -13,4 +13,4 @@ table_query = {'total assets': {'row': 'total assets', 'column': col_regex,
 frequency_page_matches = {'currency': '(\p{Sc}|(?:A-Z){3})', 'units':many_scale_units}
 
 extractor = PdfScraper(banksUrl)
-extractor.scrape(table_query, frequency_page_matches, start_index=12)
+extractor.scrape(table_query, frequency_page_matches, start_index=13)

@@ -108,15 +108,15 @@ class PdfTableReader():
         page_matches = []
         matches = []
         for index, page_text in enumerate(self.pages):
-            matches = regex.findall(query, page_text, re.IGNORECASE)
-            match = {'page':index+1,'freq_dict':Counter(matches)}
+            text_matches = regex.findall(query, page_text, re.IGNORECASE)
+            match = {'page':index+1,'freq_dict':Counter(text_matches)}
             page_matches.append(match)
         freq_table = sum(pd.DataFrame(page_matches)['freq_dict'], Counter())
         freq_max = max(freq_table, key=freq_table.get, default='No matches found')
-        for match in page_matches:
+        for page_match in page_matches:
             intersection = match['freq_dict'] | freq_table
             matches.append({match_name: max(intersection, key=intersection.get, default=freq_max), 
-                            'page':match['page']})
+                            'page':page_match['page']})
         return pd.DataFrame(matches)
     
     def extractPageTables(self, page, flavor, edge_tol, column_tol):
